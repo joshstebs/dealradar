@@ -76,6 +76,29 @@ class APITests(unittest.IsolatedAsyncioTestCase):
         await self.search()
         self.assertEqual((await self.client.get("/v1/deals/top", params={"postal_code": "N9V1A1"})).json()["offers"], [])
 
+    async def test_future_observation_and_verification_do_not_count_as_fresh(self):
+        entry = (await self.search()).json()["groups"][0]["offers"][0]
+        stored = self.app.state.repository.offer(entry["id"])
+        now = datetime.now(timezone.utc)
+        stored.price_verified = True
+        stored.coverage_verified = True
+        stored.reference_price_kind = "retailer"
+        stored.verified_at = now + timedelta(hours=1)
+        def persist():
+            repo = self.app.state.repository
+            repo.execute("UPDATE api_offers SET payload=? WHERE id=?", (stored.model_dump_json(), entry["id"]))
+            repo.db.commit()
+        persist()
+        top = (await self.client.get("/v1/deals/top", params={"postal_code": "N9V1A1"})).json()
+        self.assertEqual(top["offers"], [], "A future verification time cannot prove a current deal")
+        stored.verified_at = now
+        persist()
+        top = (await self.client.get("/v1/deals/top", params={"postal_code": "N9V1A1"})).json()
+        self.assertEqual(len(top["offers"]), 1, "A current, fully verified offer remains eligible")
+        stored.observed_at = now + timedelta(hours=1)
+        persist()
+        self.assertEqual((await self.client.get(f'/v1/offers/{entry["id"]}')).status_code, 410)
+
     async def test_cache_and_postal_scope(self):
         first = (await self.search()).json()
         calls = len(self.calls)
