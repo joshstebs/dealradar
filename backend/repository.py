@@ -95,9 +95,16 @@ class Repository:
         self.db.close()
 
 
+def is_recent(timestamp: datetime | None, now: datetime, max_age: int) -> bool:
+    if timestamp is None or timestamp.utcoffset() is None or now.utcoffset() is None:
+        return False
+    age = (now - timestamp).total_seconds()
+    return 0 <= age <= max_age
+
+
 def is_active(offer: Offer, now: datetime) -> bool:
     # Unknown expiry isn't proof of freshness; online prices age out sooner.
     max_age = 21600 if offer.source == "flipp" else 900
     return ((offer.valid_from is None or offer.valid_from <= now)
             and (offer.valid_to is None or offer.valid_to > now)
-            and (now - offer.observed_at).total_seconds() <= max_age)
+            and is_recent(offer.observed_at, now, max_age))

@@ -90,13 +90,16 @@ class Pipeline:
                         else "connection_failed")
                 return SourceStatus(source=source, status="error", checked_at=observed, error_code=code), None
         results = await asyncio.gather(fetch("flipp"), fetch("rfd"))
+        # The source timestamp is recorded after fetch starts. Check freshness
+        # against the collection time, not the earlier request-start time.
+        collected_at = datetime.now(timezone.utc)
         offers, community, sources = [], [], []
         for status, data in results:
             if data and status.source == "flipp":
                 for raw in data["items"]:
                     fetched = datetime.fromisoformat(data["fetched_at"])
                     offer = flyer_offer(raw, request.postal_code, fetched)
-                    if offer and is_active(offer, observed):
+                    if offer and is_active(offer, collected_at):
                         offers.append(offer)
                     else:
                         status.rejected_count += 1

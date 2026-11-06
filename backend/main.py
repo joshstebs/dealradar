@@ -14,7 +14,7 @@ from backend.cache import ResilientCache
 from backend.config import Settings
 from backend.models import BasketRequest, Offer, SearchRequest, SearchResponse, SourceStatus
 from backend.pipeline import Pipeline, group_offers
-from backend.repository import Repository, is_active
+from backend.repository import Repository, is_active, is_recent
 from scrapers.flipp_client import normalize_postal
 
 
@@ -126,7 +126,7 @@ def create_app(settings: Settings | None = None, transport=None):
         candidates = []
         for offer in app.state.repository.offers(fsa, postal):
             if not (offer.price_verified and offer.coverage_verified and offer.verified_at and offer.valid_to
-                    and (now - offer.verified_at).total_seconds() <= settings.verification_max_age_seconds):
+                    and is_recent(offer.verified_at, now, settings.verification_max_age_seconds)):
                 continue
             if offer.regular_price is None or offer.reference_price_kind is None:
                 continue
