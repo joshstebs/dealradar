@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f14" />
+  <meta name="description" content="DealRadar compares Canadian flyer and online prices, shows what a deal is really based on, and tracks the prices you watch." />
+  <title>DealRadar — Canadian price radar</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <a class="skip" href="#results">Skip to results</a>
+  <header class="topbar">
+    <div class="wrap topbar__row">
+      <a class="brand" href="/" aria-label="DealRadar home">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__word">DEAL<span>RADAR</span></span>
+      </a>
+      <button class="loc" id="locBtn" type="button" aria-haspopup="dialog">
+        <span class="loc__dot" aria-hidden="true"></span>
+        <span id="locLabel">Set postal code</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <p class="eyebrow">Canadian flyer + online prices</p>
+      <h1 id="hero-title">Know what a deal is <em>actually</em> worth.</h1>
+      <p class="lede">Compare identical products across retailers, see the last successful price check, and watch the items you care about. Source-reported prices, clearly labelled.</p>
+      <form class="search" id="searchForm" role="search" novalidate>
+        <label class="sr-only" for="query">Product</label>
+        <input id="query" name="query" type="search" placeholder="Chicken breast, coffee, paper towels…" autocomplete="off" enterkeyhint="search" />
+        <label class="sr-only" for="postal">Postal code</label>
+        <input id="postal" name="postal" type="text" placeholder="N9A 6K9" maxlength="7" autocomplete="postal-code" inputmode="text" aria-describedby="postalHelp" />
+        <button class="btn btn--lime" type="submit" id="searchBtn">Scan prices</button>
+      </form>
+      <p id="postalHelp" class="help">A full postal code is required: flyer coverage differs inside one FSA. Nothing is ordered or paid here.</p>
+      <p class="formError" id="formError" role="alert" hidden></p>
+    </section>
+
+    <section class="statusStrip wrap" id="statusStrip" aria-live="polite" hidden>
+      <div class="statusStrip__items" id="sourceStatus"></div>
+      <p class="statusStrip__note" id="statusNote"></p>
+    </section>
+
+    <section class="wrap" id="results" aria-labelledby="resultsTitle" tabindex="-1">
+      <div class="sectionHead">
+        <div>
+          <p class="eyebrow" id="resultsEyebrow">Live radar</p>
+          <h2 id="resultsTitle">Source-reported deals</h2>
+        </div>
+        <div class="filters" role="group" aria-label="Filter results">
+          <button class="chip is-on" type="button" data-filter="all">All</button>
+          <button class="chip" type="button" data-filter="flyer">Flyers</button>
+          <button class="chip" type="button" data-filter="online">Online</button>
+          <button class="chip" type="button" data-filter="discount">Biggest drop</button>
+        </div>
+      </div>
+
+      <div class="empty" id="emptyState">
+        <div class="radar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <h3>Start with a product and a postal code</h3>
+        <p>DealRadar reads current Canadian flyers and online listings. It will not invent a regular price, a discount, or a checkout total.</p>
+      </div>
+
+      <div class="skeletonGrid" id="skeleton" hidden aria-hidden="true">
+        <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+      </div>
+
+      <div class="grid" id="cardGrid" hidden></div>
+
+      <section class="compare" id="comparePanel" hidden aria-labelledby="compareTitle">
+        <div class="compare__head">
+          <div><p class="eyebrow">Like-for-like</p><h2 id="compareTitle">Compare prices</h2></div>
+          <button class="iconBtn" id="closeCompare" type="button" aria-label="Close comparison">×</button>
+        </div>
+        <div class="tableWrap"><table id="compareTable">
+          <thead><tr><th scope="col">Retailer</th><th scope="col">Price</th><th scope="col">Unit price</th><th scope="col">Checked</th><th scope="col">Source</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <p class="fine" id="compareNote"></p>
+        <div class="history" id="historyPanel" hidden>
+          <div class="history__head"><h3>Observed price history</h3><span id="historyRange"></span></div>
+          <div id="historyChart" class="chart" role="img" aria-label="Price history chart"></div>
+          <dl class="stats" id="historyStats"></dl>
+          <p class="fine">Built only from prices DealRadar observed. A missing point is unknown, not a zero.</p>
+        </div>
+      </section>
+
+      <section class="watch" id="watchSection" aria-labelledby="watchTitle">
+        <div class="sectionHead">
+          <div><p class="eyebrow">Your radar</p><h2 id="watchTitle">Watchlist</h2></div>
+          <button class="chip" id="refreshWatch" type="button">Refresh</button>
+        </div>
+        <div id="watchList" class="watchList"></div>
+      </section>
+
+      <section class="method" aria-labelledby="methodTitle">
+        <h2 id="methodTitle">What the labels mean</h2>
+        <dl class="methodGrid">
+          <div><dt>Source-reported</dt><dd>The retailer published this price. We have not completed a checkout or confirmed stock.</dd></div>
+          <div><dt>Checked</dt><dd>When DealRadar last successfully read that price. Old observations stop counting as current.</dd></div>
+          <div><dt>Was price</dt><dd>Shown only when the retailer's own original price is higher than the sale price. Otherwise it is removed.</dd></div>
+          <div><dt>Unit price</dt><dd>Normalized to 100 g, 100 ml, roll, or unit when the package size is explicit.</dd></div>
+        </dl>
+      </section>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Primary">
+    <a class="tab is-on" href="#results"><span aria-hidden="true">◎</span>Deals</a>
+    <a class="tab" href="#watchSection"><span aria-hidden="true">☆</span>Watchlist</a>
+    <a class="tab" href="#methodTitle"><span aria-hidden="true">i</span>How it works</a>
+  </nav>
+
+  <dialog id="locDialog" class="dialog" aria-labelledby="locTitle">
+    <form method="dialog" id="locForm">
+      <h2 id="locTitle">Where should we look?</h2>
+      <p>Use a full Canadian postal code. FSA-only searches cannot be priced because store coverage varies within an FSA.</p>
+      <label for="locPostal">Postal code</label>
+      <input id="locPostal" name="postal" maxlength="7" autocomplete="postal-code" placeholder="N9A 6K9" />
+      <p class="formError" id="locError" role="alert" hidden></p>
+      <div class="dialog__actions">
+        <button class="btn" value="cancel" type="submit">Cancel</button>
+        <button class="btn btn--lime" value="save" type="submit">Use this location</button>
+      </div>
+      <p class="fine">Saved on this device only. No account required.</p>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

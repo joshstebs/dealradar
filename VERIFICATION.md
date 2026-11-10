@@ -53,3 +53,34 @@ gradle :app:testDebugUnitTest :app:assembleDebug
 
 Set `TEST_DATABASE_URL` and `TEST_REDIS_URL` to dedicated test services to run
 storage integrations. Do not point these tests at a production database.
+
+## 2026-11-10 — reliability pass (OracleStebs)
+
+Verified locally against Python 3.14 and the live Flipp endpoint:
+
+- Full suite: 40 discovered, 37 passed, 3 skipped (PostgreSQL/Redis services and
+  the Android client, which is not in this repository).
+- Live Flipp search with a full postal code (N9A 6K9): HTTP 200, 8–43 offers,
+  images and sale/regular prices mapped. An FSA-only request returns HTTP 422
+  with a clear explanation; the live provider rejects FSAs with code 605.
+- RFD is bot-blocked (HTTP 202 JavaScript challenge) and is reported as
+  `blocked`, not as a schema change. Search continues with Flipp.
+- The gzip double-decode defect was reproduced against the live feed
+  (`httpx.DecodingError: incorrect header check`) and is covered by a regression
+  test that serves a gzip body with its original headers.
+- Watchlist round trip (create, list with best current offer, delete) passes
+  against SQLite. History summary (lowest/median/latest/change) passes with two
+  observations of the same item.
+- `node scripts/ui_smoke.mjs` drives the real `web/app.js` in jsdom against the
+  running API: cards render, CAD formatting is present, comparison opens,
+  watchlist persists, and an FSA-only search shows the required error.
+
+Not verified here:
+
+- No Chromium/Android runtime is available in this sandbox, so layout and touch
+  behaviour were not exercised on a real device or emulator. The jsdom smoke test
+  validates behaviour, not visual rendering.
+- Online (`ecom_items`) coverage depends on the provider returning them for a
+  query; no retailer checkout or stock verification was performed.
+- RFD remains unavailable until a permitted feed or browser-based collector is
+  approved.

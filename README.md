@@ -1,9 +1,9 @@
 # DealRadar CA starter
 
 FastAPI backend, source adapters, persistent offer/history read model, injectable
-LLM normalizer, native Android client, and responsive React component. The API
-runs locally; external feeds and an Android APK remain unvalidated in this
-restricted execution environment. No deployment has been performed.
+LLM normalizer, and a mobile-first web client. The API runs locally; external
+feeds are live-validated where noted in `VERIFICATION.md`. The native Android
+client referenced by earlier revisions is not included in this repository.
 
 ```sh
 cd /workspace/dealradar-ca
@@ -23,7 +23,7 @@ it does not geocode natural-language place names or perform semantic retrieval.
 ```sh
 curl -X POST http://localhost:8000/v1/search \
   -H 'Content-Type: application/json' \
-  -d '{"query":"cheap chicken breast near Windsor","postal_code":"N9V"}'
+  -d '{"query":"cheap chicken breast near Windsor","postal_code":"N9A 6K9"}'
 python scripts/validate_live.py --postal-code N9V --query chicken
 python scripts/export_openapi.py
 ```
@@ -32,6 +32,12 @@ The live checker writes a report and exits nonzero on failure. It never
 substitutes fixtures. See `validation/live-feeds.json` for the actual attempt.
 Enable feeds individually with `FLIPP_ENABLED` and `RFD_ENABLED`. All-source
 failure returns HTTP 503; partial failures retain useful results and warnings.
+
+New endpoints: `GET /v1/deals/top` (source-reported discounts, explicitly not
+checkout-verified), `GET /v1/items/{id}/history` (observations plus low/median/latest
+summary), and `POST`/`GET`/`DELETE /v1/watchlist` (device-scoped watchlist with
+price-drop state). Product comparison is conservative: listings only share a group
+when brand, normalized name, and declared size agree, or when a model/SKU matches.
 
 Set `DATABASE_URL=postgresql://...` for PostgreSQL and `REDIS_URL=redis://...` for
 Redis. Configuration reads process environment; `.env.example` is a template,
@@ -46,9 +52,13 @@ for five minutes. Source-reported prices cannot become verified steals without
 independent checkout and local-coverage evidence; the current adapters provide
 neither, so verified-steal responses are intentionally empty.
 
-Native Android setup: [`android/README.md`](android/README.md). CI is configured
-for Python, real PostgreSQL/Redis connections, and Android JVM tests/debug APK.
-The workflow has not been run from this workspace.
+Open the web client at `http://localhost:8000/`. It is served by FastAPI from
+`web/` with no build step: search, source-status labels, comparison tables,
+observed price history, and a device-local watchlist.
+
+A full postal code is required for live pricing. Flipp accepts an FSA with
+HTTP 422 (code 605), and store coverage differs inside one FSA, so the API
+returns 422 with an explanation instead of inventing a suffix.
 
 Apply `db/schema.sql` to PostgreSQL 15+ with pgvector installed. Use least-privilege
 database credentials; migrations run separately from the API identity.

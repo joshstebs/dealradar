@@ -47,6 +47,10 @@ class Offer(BaseModel):
     postal_scope: str
     source: str
     source_url: str | None = None
+    image_url: str | None = None
+    brand: str | None = None
+    sku: str | None = None
+    discount_percent: str | None = None
     currency: Literal["CAD"] = "CAD"
     sale_price: str
     price_basis: Literal["package", "g", "kg", "lb", "ml", "l", "roll", "unit"] = "package"
@@ -82,6 +86,22 @@ class SearchResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     cached: bool = False
     completed_at: datetime
+
+
+class WatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    device_id: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    item_id: UUID
+    target_price: str | None = Field(default=None, pattern=r"^\d{1,7}(?:\.\d{1,2})?$")
+
+    @field_validator("target_price")
+    @classmethod
+    def finite_target(cls, value):
+        if value is None:
+            return None
+        if float(value) <= 0:
+            raise ValueError("Target price must be greater than zero")
+        return value
 
 
 class BasketLine(BaseModel):
