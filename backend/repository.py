@@ -6,6 +6,7 @@ offer snapshots and source runs without requiring the catalog/embedding worker.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
@@ -145,12 +146,23 @@ class Repository:
                                 (item_id, fsa, scope)).fetchall()
         now = datetime.now(timezone.utc)
         offers = [o for row in rows if (o := Offer.model_validate_json(row[0])) and is_active(o, now)]
-        return sorted(offers, key=lambda o: (o.unit_price is None, o.unit_price or "", float(o.sale_price)))
+
+        def rank(offer: Offer):
+            # Decimal comparison — never lexicographic strings ("10.00" < "9.50").
+            # Package-priced offers first, then cheapest reliable unit price,
+            # then sale price.
+            unit = Decimal(offer.unit_price) if offer.unit_price is not None else None
+            return (offer.price_basis != "package", unit is None,
+                    unit if unit is not None else Decimal("Infinity"),
+                    Decimal(offer.sale_price))
+
+        return sorted(offers, key=rank)
 
     def watch(self, device_id: str, item_id: str, target_price: str | None = None) -> None:
         with self.lock:
             self.execute("INSERT INTO api_watchlist(device_id,item_id,target_price,created_at) VALUES(?,?,?,?) "
-                         "ON CONFLICT(device_id,item_id) DO UPDATE SET target_price=excluded.target_price",
+                         "ON CONFLICT(device_id,item_id) DO UPDATE SET "
+                         "target_price=COALESCE(excluded.target_price, api_watchlist.target_price)",
                          (device_id, item_id, target_price, datetime.now(timezone.utc).isoformat()))
             self.db.commit()
 
@@ -174,6 +186,7 @@ class Repository:
             offer = Offer.model_validate_json(row[0])
             if offer.fsa == fsa and offer.postal_scope == scope:
                 points.append({"observed_at": offer.observed_at, "sale_price": offer.sale_price,
+                               "price_basis": offer.price_basis,
                                "unit_price": offer.unit_price, "unit_basis": offer.unit_basis,
                                "store": offer.store, "source": offer.source})
         return points

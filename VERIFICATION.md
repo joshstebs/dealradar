@@ -84,3 +84,73 @@ Not verified here:
   query; no retailer checkout or stock verification was performed.
 - RFD remains unavailable until a permitted feed or browser-based collector is
   approved.
+
+## 2026-11-11 — honesty, expiry, watchlist and filtering pass (Bosun)
+
+Verified locally on Python 3.14.4 / Node 26.12.0 against the live Flipp endpoint:
+
+- Full suite: 60 discovered, 57 passed, 3 skipped (PostgreSQL/Redis integrations,
+  Android client absent). New `tests/test_honesty_fixes.py` covers 20 cases:
+  multipack quantities ("6 x 100 g", "355 mL x 12", "1 kg (pack of 2)"),
+  per-measure discount suppression, zero-price rejection, implausible-original
+  rejection, date-only expiry in the Canadian site timezone, numeric (not
+  lexicographic) best-offer ordering, target preservation on re-watch, history
+  summaries excluding per-measure rows, deals filtering, retailer/price filters,
+  price sorting, inverted range rejection, and watchlist cache/privacy headers.
+- `scripts/validate_live.py --postal-code "N9A 6K9" --query chicken`:
+  HTTP 200, Flipp `partial`, **74 items parsed, 70 offers returned**, 14 real
+  retailer discounts, 0 zero/absurd prices, valid windows
+  `2026-11-03T05:00Z → 2026-11-16T04:59Z`. Report retained at
+  `validation/live-feeds.json`. RFD remains blocked: HTTPS preflight 406 and a
+  202 JavaScript challenge, reported as `blocked`, never substituted.
+- UI smoke (`node scripts/ui_smoke.mjs`, jsdom 26): **13/13 assertions** against
+  a local uvicorn instance and live data — cards, CAD formatting, visible
+  source-reported caveat, price notes, comparison, server-persisted watchlist,
+  FSA rejection, failed-fetch error, and stale-comparison removal.
+
+Fixes in this pass:
+
+- No percentage discount is derived from a per-measure price against a package
+  original; a "$0.00" sale price is rejected; a stated original more than 10x
+  the sale price is excluded as a data error; `/v1/deals/top` additionally
+  excludes per-measure rows, zero prices, >95% claims, and now applies its
+  `period` window instead of echoing it.
+- Date-only `valid_to`/`valid_from` resolve in `America/Toronto` (end of day)
+  instead of becoming `None`, so an expired circular can no longer remain
+  "active" for the whole cache window.
+- Unit pricing understands trailing counts and "pack of N", so multipacks are
+  not compared with single units at the wrong unit price.
+- Watchlist `best_offer`/`target_hit` compare Decimals (the previous string sort
+  ranked "$10.00" below "$9.50"); targets only match package-priced offers;
+  re-watching without a target keeps the existing target; watchlist and history
+  responses are `private, no-store`, the device id is no longer echoed, and
+  GET/DELETE validate the id format.
+- History summaries use one representative package price per check, exclude
+  per-measure rows, report `checks`, and only support a historical-low claim
+  with at least two checks.
+- Search accepts `retailer`, `min_price`, `max_price` and
+  `sort=relevance|price|unit_price|discount` (validated; inverted ranges are
+  422). Category filtering is deliberately absent because Flipp's live payload
+  contains no category field.
+- Client: all price caveats are available per card, source/outage warnings are
+  rendered, filtered counts reflect visible cards, failed searches clear the
+  stale comparison and reset the result heading, watchlist writes are verified
+  before the star/localStorage update (and reverted on failure), empty states
+  distinguish "no results" from "start here", the comparison table is a
+  keyboard-scrollable region with focus management, and the postal dialog's
+  Cancel no longer risks discarding typed input.
+
+Still not verified / not implemented (unchanged or newly documented):
+
+- No account authentication. Watchlists remain device-id scoped (now with
+  format validation and no-store caching); a leaked device id can read/delete
+  that device's list. Account tokens are a prerequisite for real alerts.
+- No notification delivery exists behind `target_price`/`target_hit`; state is
+  recomputed on GET. README already lists notifications as roadmap.
+- RFD is bot-blocked; no browser-based collector is used or approved.
+- No retailer checkout, stock, or store-level availability verification.
+  Flyer prices remain source-reported.
+- Category data is unavailable from the supported feed, so no category filter.
+- jsdom exercises behaviour, not layout or touch; no Chromium/device run.
+- PostgreSQL/Redis paths remain skipped without test services; no CI workflow
+  exists in this repository.

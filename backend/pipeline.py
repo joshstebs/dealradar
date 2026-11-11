@@ -25,6 +25,30 @@ def relevant(title: str, tokens: list[str]) -> bool:
     return all(token.rstrip("s") in words for token in tokens)
 
 
+def _matches_filters(offer, request: SearchRequest) -> bool:
+    if request.retailer and offer.store.casefold() != request.retailer.casefold():
+        return False
+    price = Decimal(offer.sale_price)
+    if request.min_price is not None and price < Decimal(request.min_price):
+        return False
+    if request.max_price is not None and price > Decimal(request.max_price):
+        return False
+    return True
+
+
+def sort_groups(groups, sort: str):
+    if sort == "relevance":
+        return groups
+    if sort == "price":
+        return sorted(groups, key=lambda g: min(Decimal(o.sale_price) for o in g.offers))
+    if sort == "unit_price":
+        return sorted(groups, key=lambda g: min(
+            (Decimal(o.unit_price) if o.unit_price is not None else Decimal("Infinity")) for o in g.offers))
+    return sorted(groups, key=lambda g: max(
+        (Decimal(o.discount_percent) for o in g.offers if o.discount_percent is not None), default=Decimal("-1")),
+        reverse=True)
+
+
 def group_offers(offers):
     groups = {}
     for offer in offers:
@@ -77,7 +101,7 @@ class Pipeline:
                 result = SearchResponse.model_validate_json(hit)
                 now = datetime.now(timezone.utc)
                 offers = [o for g in result.groups for o in g.offers if is_active(o, now)]
-                result.groups = group_offers(offers)
+                result.groups = sort_groups(group_offers(offers), request.sort)
                 result.cached = True
                 return result
             result = await self.collect(request)
@@ -134,7 +158,8 @@ class Pipeline:
                         offers.append(offer)
                     else:
                         status.rejected_count += 1
-                status.item_count = len([o for o in offers if o.source == "flipp"])
+                offers = [o for o in offers if _matches_filters(o, request)]
+                status.item_count = len([o for o in offers if o.source in ("flipp", "flipp-online")])
                 if status.rejected_count:
                     status.status = "partial"
                     status.message = "Ambiguous prices, missing stores, or inactive offers excluded"
@@ -157,7 +182,10 @@ class Pipeline:
             warnings.append("Community vote counts and links do not verify price, expiry, or local availability.")
         if parsed_query["location_text"]:
             warnings.append(f'Location text "{parsed_query["location_text"]}" was not geocoded; the selected postal code controls results.')
+        groups = sort_groups(group_offers(list({str(o.id): o for o in offers}.values())), request.sort)
+        if not groups and (request.retailer or request.min_price or request.max_price):
+            warnings.append("No offers matched the retailer or price filters applied to this search.")
         return SearchResponse(search_id=uuid4(), query=request.query, postal_code=request.postal_code,
                               fsa=request.postal_code[:3], approximate_location=len(request.postal_code) == 3,
-                              groups=group_offers(list({str(o.id): o for o in offers}.values())),
+                              groups=groups,
                               community=community, sources=sources, warnings=warnings, completed_at=observed)

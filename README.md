@@ -24,8 +24,17 @@ it does not geocode natural-language place names or perform semantic retrieval.
 curl -X POST http://localhost:8000/v1/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"cheap chicken breast near Windsor","postal_code":"N9A 6K9"}'
-python scripts/validate_live.py --postal-code N9V --query chicken
+
+# Filters use real offer fields; category is not offered because the live feed
+# does not provide one.
+curl -X POST http://localhost:8000/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"chicken","postal_code":"N9A 6K9","retailer":"Sobeys",
+       "min_price":"5","max_price":"25","sort":"unit_price"}'
+
+python scripts/validate_live.py --postal-code "N9A 6K9" --query chicken
 python scripts/export_openapi.py
+npm install --include=dev && node scripts/ui_smoke.mjs http://127.0.0.1:8000
 ```
 
 The live checker writes a report and exits nonzero on failure. It never
@@ -34,10 +43,19 @@ Enable feeds individually with `FLIPP_ENABLED` and `RFD_ENABLED`. All-source
 failure returns HTTP 503; partial failures retain useful results and warnings.
 
 New endpoints: `GET /v1/deals/top` (source-reported discounts, explicitly not
-checkout-verified), `GET /v1/items/{id}/history` (observations plus low/median/latest
-summary), and `POST`/`GET`/`DELETE /v1/watchlist` (device-scoped watchlist with
-price-drop state). Product comparison is conservative: listings only share a group
-when brand, normalized name, and declared size agree, or when a model/SKU matches.
+checkout-verified; per-measure and implausible >95% claims are excluded and the
+`period` window is applied), `GET /v1/items/{id}/history` (observations plus
+low/median/latest summary over package prices and distinct checks only), and
+`POST`/`GET`/`DELETE /v1/watchlist` (device-scoped watchlist with price-drop
+state). Product comparison is conservative: listings only share a group when
+brand, normalized name, and declared size agree, or when a model/SKU matches.
+
+Known limits: there is no account authentication or notification delivery —
+watchlists are scoped by a caller-held device id and `target_hit` is computed on
+read. RFD is bot-blocked. Store stock, checkout prices, and category data are
+not available from the supported feed, so none are inferred. Unit prices are
+shown only when a declared package size can be parsed; per-measure prices are
+labelled and excluded from discount and basket math.
 
 Set `DATABASE_URL=postgresql://...` for PostgreSQL and `REDIS_URL=redis://...` for
 Redis. Configuration reads process environment; `.env.example` is a template,

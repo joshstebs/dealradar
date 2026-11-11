@@ -8,7 +8,7 @@ from pathlib import Path
 import statistics
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,20 +23,33 @@ from scrapers.flipp_client import normalize_postal
 
 
 def summarize_points(points):
-    """Price summary over observed offers. Never claims an unobserved low."""
-    if not points:
-        return {"lowest": None, "highest": None, "median": None, "latest": None,
-                "previous": None, "change_percent": None, "observations": 0}
-    prices = [Decimal(p["sale_price"]) for p in points]
-    latest = prices[-1]
-    previous = next((price for price in reversed(prices[:-1]) if price != latest), None)
+    """Price summary over comparable package observations.
+
+    Per-measure ($/lb, $/kg) rows are excluded from the numeric summary: mixing
+    them with package prices produces a "lowest" that no shopper can pay. Each
+    observation time contributes its cheapest store as one check, so "latest"
+    and "change" describe a check, not an arbitrary store row.
+    """
+    comparable = [p for p in points if p.get("price_basis", "package") == "package"
+                  and Decimal(p["sale_price"]) > 0]
+    empty = {"lowest": None, "highest": None, "median": None, "latest": None,
+             "previous": None, "change_percent": None, "observations": 0, "checks": 0}
+    if not comparable:
+        return empty
+    by_time = {}
+    for point in comparable:
+        by_time.setdefault(point["observed_at"], []).append(Decimal(point["sale_price"]))
+    series = [min(by_time[stamp]) for stamp in sorted(by_time)]
+    latest = series[-1]
+    previous = series[-2] if len(series) > 1 else None
     change = None
     if previous is not None and previous > 0:
         change = str(((latest - previous) / previous * 100).quantize(Decimal("0.1")))
-    return {"lowest": str(min(prices)), "highest": str(max(prices)),
-            "median": str(statistics.median(prices)), "latest": str(latest),
+    return {"lowest": str(min(series)), "highest": str(max(series)),
+            "median": str(statistics.median(series)), "latest": str(latest),
             "previous": str(previous) if previous is not None else None,
-            "change_percent": change, "observations": len(prices)}
+            "change_percent": change, "observations": len(comparable),
+            "checks": len(series)}
 
 
 def location(value):
@@ -128,7 +141,8 @@ def create_app(settings: Settings | None = None, transport=None):
         return {"groups": group_offers(offers), "postal_code": postal}
 
     @app.get("/v1/items/{item_id}/history")
-    async def history(item_id: UUID, postal_code: str, days: int = Query(90, ge=1, le=365)):
+    async def history(item_id: UUID, response: Response, postal_code: str, days: int = Query(90, ge=1, le=365)):
+        response.headers["Cache-Control"] = "private, no-store"
         postal, fsa = location(postal_code)
         since = datetime.now(timezone.utc) - timedelta(days=days)
         points = app.state.repository.item_points(str(item_id), fsa, postal, since)
@@ -138,8 +152,10 @@ def create_app(settings: Settings | None = None, transport=None):
         summary = summarize_points(points)
         return {"item_id": str(item_id), "postal_code": postal, "days": days,
                 "observations": observations, "summary": summary,
-                "historical_low_claim_supported": summary["lowest"] is not None,
-                "note": "History is built from observed source prices, not manufacturer MSRP."}
+                "historical_low_claim_supported": summary["checks"] >= 2,
+                "note": ("History is built from observed package prices, not manufacturer MSRP. "
+                         "Per-measure prices are listed but excluded from the summary because their "
+                         "final cost depends on weight or quantity.")}
 
     @app.get("/v1/sources/status")
     async def statuses(postal_code: str):
@@ -160,15 +176,22 @@ def create_app(settings: Settings | None = None, transport=None):
         """
         postal, fsa = location(postal_code)
         now = datetime.now(timezone.utc)
+        # "day" and "week" are observation windows, not flyer validity claims.
+        window = timedelta(hours=24) if period == "day" else timedelta(days=7)
         candidates = []
         for offer in app.state.repository.offers(fsa, postal):
             if offer.regular_price is None or offer.reference_price_kind != "retailer":
                 continue
+            # A percentage only makes sense for a package price against a
+            # package original. Per-unit prices have a different basis.
+            if offer.price_basis != "package" or not is_recent(offer.observed_at, now, int(window.total_seconds())):
+                continue
             reference, price = Decimal(offer.regular_price), Decimal(offer.sale_price)
-            if reference <= 0 or price < 0 or reference <= price:
+            if reference <= 0 or price <= 0 or reference <= price:
                 continue
             percent = (reference - price) / reference * 100
-            if percent < Decimal(min_discount):
+            # Exclude implausible data errors rather than advertising them.
+            if percent > 95 or percent < Decimal(min_discount):
                 continue
             candidates.append((percent, offer))
         candidates.sort(key=lambda pair: pair[0], reverse=True)
@@ -202,12 +225,18 @@ def create_app(settings: Settings | None = None, transport=None):
         return {"watching": True, "item_id": str(payload.item_id)}
 
     @app.delete("/v1/watchlist/{item_id}")
-    async def unwatch(item_id: UUID, device_id: str = Query(min_length=8, max_length=64)):
+    async def unwatch(item_id: UUID, device_id: str = Query(min_length=8, max_length=64,
+                                                            pattern=r"^[A-Za-z0-9._-]+$")):
         app.state.repository.unwatch(device_id, str(item_id))
         return {"watching": False, "item_id": str(item_id)}
 
     @app.get("/v1/watchlist")
-    async def watchlist(device_id: str, postal_code: str):
+    async def watchlist(response: Response, device_id: str = Query(min_length=8, max_length=64,
+                                                                   pattern=r"^[A-Za-z0-9._-]+$"),
+                        postal_code: str = Query()):
+        # Device-scoped data must not be cached by a browser or intermediary,
+        # and the device identifier is not repeated back in the body.
+        response.headers["Cache-Control"] = "private, no-store"
         postal, fsa = location(postal_code)
         items = []
         now = datetime.now(timezone.utc)
@@ -218,10 +247,13 @@ def create_app(settings: Settings | None = None, transport=None):
             summary = summarize_points(points)
             target = Decimal(entry["target_price"]) if entry["target_price"] else None
             best = latest[0] if latest else None
-            hit_target = bool(best and target is not None and Decimal(best.sale_price) <= target)
+            # A target is a package price the user chose to pay. Comparing it to
+            # a $/lb offer would report a hit the shopper cannot actually claim.
+            hit_target = bool(best and target is not None and best.price_basis == "package"
+                              and Decimal(best.sale_price) <= target)
             items.append({**entry, "offers": latest, "summary": summary,
                           "best_offer": best, "target_hit": hit_target})
-        return {"device_id": device_id, "postal_code": postal, "items": items}
+        return {"postal_code": postal, "items": items}
 
     @app.get("/")
     async def index():

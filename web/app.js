@@ -9,6 +9,7 @@ const money = (value) => {
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 }[c]));
+const safeHref = (value) => (/^https:\/\//i.test(String(value || "")) ? String(value) : null);
 
 const POSTAL = /^[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z](?:\d[ABCEGHJ-NPRSTV-Z]\d)?$/;
 const state = {
@@ -31,6 +32,7 @@ const els = {
   compareNote: $("#compareNote"), historyPanel: $("#historyPanel"),
   chart: $("#historyChart"), stats: $("#historyStats"), historyRange: $("#historyRange"),
   watchList: $("#watchList"), locLabel: $("#locLabel"), locBtn: $("#locBtn"),
+  emptyTitle: $("#emptyState h3"), emptyText: $("#emptyState p"),
   locDialog: $("#locDialog"), locForm: $("#locForm"), locPostal: $("#locPostal"),
   locError: $("#locError"), resultsEyebrow: $("#resultsEyebrow"),
 };
@@ -64,14 +66,14 @@ function unitText(offer) {
 }
 
 function offerCard(offer, groupKey) {
-  const id = esc(offer.id);
   const watched = state.watch.some((w) => w.item_id === offer.item_id);
-  const discount = offer.discount_percent ? `${Number(offer.discount_percent).toFixed(0)}% off` : "";
+  const discount = Number(offer.discount_percent) >= 1
+    ? `${Number(offer.discount_percent).toFixed(0)}% off` : "";
   return `
     <article class="card" data-group="${esc(groupKey)}" data-source="${esc(offer.source)}" data-discount="${Number(offer.discount_percent || 0)}">
       <div class="card__top">
         <span class="store">${esc(offer.store)}</span>
-        <span class="badge ${discount ? "drop" : ""}">${discount || (offer.source === "flipp-online" ? "online" : "flyer")}</span>
+        <span class="badge ${discount ? "drop" : ""}" ${discount ? 'title="Discount compares the retailer-reported original price; not checkout-verified."' : ""}>${discount || (offer.source === "flipp-online" ? "online" : "flyer")}</span>
       </div>
       <h3>${esc(offer.product_name)}</h3>
       <div class="priceRow">
@@ -84,7 +86,7 @@ function offerCard(offer, groupKey) {
         <span>${offer.price_basis === "package" ? "package price" : `priced per ${esc(offer.price_basis)}`}</span>
         <span>${offer.source === "flipp-online" ? "online listing" : "flyer"}</span>
       </div>
-      ${offer.conditions?.length ? `<p class="cond">${esc(offer.conditions[0])}</p>` : ""}
+      ${offer.conditions?.length ? `<details class="cond"><summary>Price notes</summary><ul>${offer.conditions.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></details>` : ""}
       <div class="card__actions">
         <button class="btn" type="button" data-compare="${esc(groupKey)}">Compare</button>
         <button class="btn watchBtn ${watched ? "is-on" : ""}" type="button"
@@ -117,25 +119,34 @@ function render() {
   });
   els.empty.hidden = visible.length > 0;
   els.grid.hidden = visible.length === 0;
+  if (!rows.length) {
+    els.emptyTitle.textContent = `No prices found for “${state.query}”`;
+    els.emptyText.textContent = "No supported source returned a usable price for this product and postal code. Try a broader product name or a nearby postal code.";
+  } else if (!visible.length) {
+    els.emptyTitle.textContent = "No offers match this filter";
+    els.emptyText.textContent = "Clear the filter to see the offers returned for this search.";
+  } else {
+    els.emptyTitle.textContent = "Start with a product and a postal code";
+    els.emptyText.textContent = "DealRadar reads current Canadian flyers and online listings. It will not invent a regular price, a discount, or a checkout total.";
+  }
   els.grid.innerHTML = visible
     .sort((a, b) => Number(b.offer.discount_percent || 0) - Number(a.offer.discount_percent || 0))
     .map(({ offer, groupKey }) => offerCard(offer, groupKey)).join("");
-  const count = rows.length;
+  const count = visible.length;
   els.resultsEyebrow.textContent = count ? `${count} price${count === 1 ? "" : "s"} · ${state.data.postal_code}` : "Live radar";
   $("#resultsTitle").textContent = state.query ? `Results for “${state.query}”` : "Source-reported deals";
 }
 
-function renderSources(sources) {
-  els.strip.hidden = !sources?.length;
-  if (!sources?.length) return;
+function renderSources(sources, warnings = []) {
+  els.strip.hidden = !sources?.length && !warnings.length;
+  if (!sources?.length && !warnings.length) return;
   els.sources.innerHTML = sources.map((s) => `
     <span class="srcPill ${esc(s.status)}"><span class="dot" aria-hidden="true"></span>
       <b>${esc(s.source)}</b> ${esc(s.status)}${s.item_count ? ` · ${s.item_count}` : ""}
     </span>`).join("");
-  const problems = sources.filter((s) => s.status !== "ok");
-  els.note.textContent = problems.length
-    ? problems.map((s) => `${s.source}: ${s.message || s.error_code || s.status}`).join(" · ")
-    : "";
+  const problems = (sources || []).filter((s) => s.status !== "ok" && s.status !== "disabled")
+    .map((s) => `${s.source}: ${s.message || s.error_code || s.status}`);
+  els.note.textContent = [...problems, ...(warnings || [])].join(" · ");
 }
 
 async function search(event) {
@@ -152,6 +163,12 @@ async function search(event) {
   els.skeleton.hidden = false;
   els.grid.hidden = true;
   els.empty.hidden = true;
+  els.grid.setAttribute("aria-busy", "true");
+  // Never leave a previous search's comparison or history beside a new result.
+  els.compare.hidden = true;
+  els.historyPanel.hidden = true;
+  els.resultsEyebrow.textContent = "Scanning sources…";
+  $("#resultsTitle").textContent = `Results for “${query}”`;
   try {
     const response = await fetch("/v1/search", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -166,14 +183,23 @@ async function search(event) {
       throw new Error(message);
     }
     state.data = body;
-    renderSources(body.sources);
+    renderSources(body.sources, body.warnings);
     render();
   } catch (error) {
+    state.data = null;
     showError(error.message);
+    els.strip.hidden = true;
+    els.sources.innerHTML = "";
+    els.note.textContent = "";
+    els.resultsEyebrow.textContent = "Live radar";
+    $("#resultsTitle").textContent = "Source-reported deals";
+    els.emptyTitle.textContent = "Prices could not be loaded";
+    els.emptyText.textContent = "No price is shown rather than a stale or invented one. Check the message above and try again.";
     els.empty.hidden = false;
   } finally {
     els.btn.disabled = false;
     els.skeleton.hidden = true;
+    els.grid.setAttribute("aria-busy", "false");
   }
 }
 
@@ -193,7 +219,7 @@ function openCompare(groupKey) {
       <td>${money(offer.sale_price)}${offer.regular_price ? ` <span class="was">${money(offer.regular_price)}</span>` : ""}</td>
       <td>${offer.unit_price ? esc(unitText(offer)) : "—"}</td>
       <td>${esc(checkedAgo(offer.observed_at))}</td>
-      <td>${offer.source_url ? `<a href="${esc(offer.source_url)}" target="_blank" rel="noopener noreferrer">Source</a>` : "No public link"}</td>
+      <td>${safeHref(offer.source_url) ? `<a href="${esc(safeHref(offer.source_url))}" target="_blank" rel="noopener noreferrer">Source</a>` : "No public link"}</td>
     </tr>`).join("");
   els.compareNote.textContent = group.offers.length > 1
     ? "Same product identity (brand, name, and declared size). Unit price decides the best value, not the biggest percentage off."
@@ -201,7 +227,10 @@ function openCompare(groupKey) {
   els.historyPanel.hidden = false;
   els.chart.innerHTML = "<p class='fine'>Loading observed history…</p>";
   els.stats.innerHTML = "";
+  state.compareTrigger = document.activeElement;
+  const close = $("#closeCompare");
   els.compare.scrollIntoView({ behavior: "smooth", block: "start" });
+  close.focus({ preventScroll: true });
   loadHistory(group.offers[0]);
 }
 
@@ -214,6 +243,7 @@ async function loadHistory(offer) {
     drawChart(body.observations || [], body.summary);
     els.historyRange.textContent = `last ${body.days} days`;
   } catch (error) {
+    els.historyRange.textContent = "";
     els.chart.innerHTML = `<p class="fine">${esc(error.message)}</p>`;
   }
 }
@@ -251,15 +281,26 @@ function drawChart(points, summary) {
 
 async function toggleWatch(itemId, name) {
   const existing = state.watch.find((w) => w.item_id === itemId);
+  const before = state.watch.slice();
   if (existing) {
     state.watch = state.watch.filter((w) => w.item_id !== itemId);
-    await fetch(`/v1/watchlist/${encodeURIComponent(itemId)}?device_id=${encodeURIComponent(state.device)}`, { method: "DELETE" }).catch(() => {});
   } else {
     state.watch.push({ item_id: itemId, name });
-    await fetch("/v1/watchlist", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_id: state.device, item_id: itemId }),
-    }).catch(() => {});
+  }
+  try {
+    const response = existing
+      ? await fetch(`/v1/watchlist/${encodeURIComponent(itemId)}?device_id=${encodeURIComponent(state.device)}`, { method: "DELETE" })
+      : await fetch("/v1/watchlist", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: state.device, item_id: itemId }),
+      });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(typeof body.detail === "string" ? body.detail : "The watchlist could not be updated.");
+    }
+  } catch (error) {
+    state.watch = before;
+    showError(error.message);
   }
   localStorage.setItem("dr_watch", JSON.stringify(state.watch));
   render();
@@ -271,7 +312,10 @@ async function renderWatch() {
     els.watchList.innerHTML = `<p class="empty">Nothing on the radar yet. Tap ☆ on any product to track its price.</p>`;
     return;
   }
-  if (!state.postal) return;
+  if (!state.postal) {
+    els.watchList.innerHTML = `<p class="empty">Set a postal code to see current prices for ${state.watch.length} watched item(s).</p>`;
+    return;
+  }
   try {
     const response = await fetch(`/v1/watchlist?device_id=${encodeURIComponent(state.device)}&postal_code=${encodeURIComponent(state.postal)}`);
     const body = await response.json();
@@ -286,7 +330,7 @@ async function renderWatch() {
           <small>${offer ? `${esc(offer.store)} · ${money(offer.sale_price)} · ${esc(checkedAgo(offer.observed_at))}` : "No current offer in this area"}</small></div>
         <div style="text-align:right">
           ${row.target_hit ? '<span class="hit">target hit</span>' : ""}
-          <small>${Number.isFinite(change) ? `${change > 0 ? "+" : ""}${change.toFixed(1)}% vs last check` : "no change recorded"}</small>
+          <small>${Number.isFinite(change) ? `${change > 0 ? "+" : ""}${change.toFixed(1)}% vs previous check` : "no prior check recorded"}</small>
           <button class="chip" type="button" data-watch="${esc(row.item_id)}" data-name="${esc(name)}">Remove</button>
         </div>
       </div>`;
@@ -307,7 +351,10 @@ els.watchList.addEventListener("click", (event) => {
   const watch = event.target.closest("[data-watch]");
   if (watch) toggleWatch(watch.dataset.watch, watch.dataset.name);
 });
-$("#closeCompare").addEventListener("click", () => { els.compare.hidden = true; });
+$("#closeCompare").addEventListener("click", () => {
+  els.compare.hidden = true;
+  state.compareTrigger?.focus?.();
+});
 $$(".chip[data-filter]").forEach((chip) => chip.addEventListener("click", () => {
   $$(".chip[data-filter]").forEach((c) => c.classList.toggle("is-on", c === chip));
   state.filter = chip.dataset.filter;
@@ -320,7 +367,6 @@ els.locBtn.addEventListener("click", () => {
   els.locDialog.showModal();
 });
 els.locForm.addEventListener("submit", (event) => {
-  if (event.submitter?.value === "cancel") return;
   event.preventDefault();
   const value = els.locPostal.value.toUpperCase().replace(/\s/g, "");
   if (!POSTAL.test(value) || value.length === 3) {
@@ -332,6 +378,7 @@ els.locForm.addEventListener("submit", (event) => {
   els.locDialog.close();
   renderWatch();
 });
+$("#locCancel").addEventListener("click", () => els.locDialog.close());
 
 if (state.postal) els.postal.value = state.postal.replace(/(.{3})/, "$1 ");
 renderWatch();

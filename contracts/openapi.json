@@ -465,6 +465,9 @@
             "required": true,
             "schema": {
               "type": "string",
+              "minLength": 8,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9._-]+$",
               "title": "Device Id"
             }
           },
@@ -523,6 +526,7 @@
               "type": "string",
               "minLength": 8,
               "maxLength": 64,
+              "pattern": "^[A-Za-z0-9._-]+$",
               "title": "Device Id"
             }
           }
@@ -914,6 +918,53 @@
             ],
             "title": "Locale",
             "default": "en-ca"
+          },
+          "retailer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retailer"
+          },
+          "min_price": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{1,7}(?:\\.\\d{1,2})?$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Price"
+          },
+          "max_price": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{1,7}(?:\\.\\d{1,2})?$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Price"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "relevance",
+              "price",
+              "unit_price",
+              "discount"
+            ],
+            "title": "Sort",
+            "default": "relevance"
           }
         },
         "additionalProperties": false,
