@@ -154,3 +154,39 @@ Still not verified / not implemented (unchanged or newly documented):
 - jsdom exercises behaviour, not layout or touch; no Chromium/device run.
 - PostgreSQL/Redis paths remain skipped without test services; no CI workflow
   exists in this repository.
+
+## 2026-11-11 — independent release review (second pass)
+
+- **Mutation testing:** all 11 fixed bugs were re-introduced one at a time in a
+  scratch worktree; the new tests caught **11/11** (per-measure discount, zero
+  price, implausible original, date-only expiry, Decimal best-offer ranking,
+  pack-of and trailing multipack parsing, target preservation, per-measure
+  history exclusion, deals guards, watchlist target basis).
+- **Live data audit through the real ASGI app:** 134 offers across
+  chicken / ground beef / apples at N9A 6K9 — 36 discounted (every percentage
+  recomputes exactly from the stated original; none exceed 95% or 10x), 32 unit
+  prices (every one recomputes from the declared size), 0 zero/negative prices,
+  0 inverted or already-expired windows, 0 per-measure violations. A separate
+  214-item direct feed probe found **no `$x/lb`-shaped `current_price` at all**
+  in these queries — the per-measure path is covered by tests, not by live data.
+- **Real-browser review** (Chromium via CDP, 390×844 and 320×700, live data):
+  found that elements toggled with the `hidden` attribute but styled with an
+  author `display` rule (`.skeletonGrid`, `.grid`, `.statusStrip`) never hid in
+  a real browser — the loading skeleton permanently covered the results on
+  phones. jsdom cannot catch this. Fixed with `[hidden] { display: none !important; }`
+  and re-verified in-browser: skeleton hides, cards render immediately under
+  the filters, zero horizontal overflow at 390 and 320 px, 48 px watch button,
+  44 px chips, comparison table scrolls in a focusable region, history chart
+  and stats render with live data. Note: re-verification required a CSS cache
+  bust; deployers should serve `/static/*` with a versioned URL or
+  `no-cache` when shipping CSS changes.
+- **Storage:** no PostgreSQL or Redis server exists on this host, so those
+  integration paths remain **untested** (documented; drivers are installed and
+  the tests skip cleanly). Added `MigrationTests`: a legacy SQLite database
+  gains its columns, rows backfill, corrupt rows are skipped, and reopening is
+  idempotent.
+- **CI readiness:** added `.github/workflows/ci.yml` — unittest on Python
+  3.12/3.14 plus `compileall`, and a UI smoke job using
+  `scripts/smoke_server.py` (the real app with a fixture provider transport, no
+  live calls). The 13-assertion smoke passes against it locally.
+- Suite after review additions: 61 tests, 58 passed, 3 skipped.

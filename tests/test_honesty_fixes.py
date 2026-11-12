@@ -6,6 +6,7 @@ No fixture price is treated as a live observation.
 """
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import sqlite3
 import tempfile
 import unittest
 from uuid import uuid4
@@ -32,6 +33,46 @@ def offer(name, price, unit_price, store="Test grocer", basis="package"):
                  sale_price=price, price_basis=basis, unit_price=unit_price,
                  unit_basis="100g", comparison_group=f"{name}|1kg",
                  observed_at=datetime.now(timezone.utc))
+
+
+class MigrationTests(unittest.TestCase):
+    """A database written by an older process must migrate, backfill and reopen."""
+
+    def test_legacy_schema_is_migrated_backfilled_and_idempotent(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = f"{directory.name}/legacy.db"
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE api_offers (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+        db.execute("CREATE TABLE api_price_observations (offer_id TEXT NOT NULL, observed_at TEXT NOT NULL, "
+                   "payload TEXT NOT NULL, PRIMARY KEY(offer_id, observed_at))")
+        legacy = Offer(id=uuid4(), item_id=uuid4(), product_name="Milk 1 L", store="Old grocer",
+                       fsa="N9V", postal_scope="N9V1A1", source="flipp", sale_price="3.99",
+                       comparison_group="milk|1l", observed_at=datetime.now(timezone.utc))
+        db.execute("INSERT INTO api_offers VALUES (?,?)", (str(legacy.id), legacy.model_dump_json()))
+        db.execute("INSERT INTO api_offers VALUES (?,?)", (str(uuid4()), "{not valid json"))
+        db.commit()
+        db.close()
+
+        repo = Repository(f"sqlite:///{path}")
+        try:
+            offer_columns = {row[1] for row in repo.db.execute("PRAGMA table_info(api_offers)")}
+            self.assertLessEqual({"fsa", "scope", "item_id", "observed_at"}, offer_columns)
+            obs_columns = {row[1] for row in repo.db.execute("PRAGMA table_info(api_price_observations)")}
+            self.assertIn("item_id", obs_columns)
+            backfilled = repo.db.execute("SELECT fsa, item_id FROM api_offers WHERE id=?",
+                                         (str(legacy.id),)).fetchone()
+            self.assertEqual((backfilled[0], backfilled[1]), ("N9V", str(legacy.item_id)))
+            self.assertEqual(len(repo.latest_offers(str(legacy.item_id), "N9V", "N9V1A1")), 1)
+        finally:
+            repo.close()
+
+        # Re-opening an already-migrated database must be a no-op, not an error.
+        repo2 = Repository(f"sqlite:///{path}")
+        try:
+            self.assertEqual(len(repo2.latest_offers(str(legacy.item_id), "N9V", "N9V1A1")), 1)
+        finally:
+            repo2.close()
 
 
 class QuantityTests(unittest.TestCase):

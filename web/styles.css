@@ -178,3 +178,8 @@ tr.best td { color: var(--lime); font-weight: 700; }
 .cond ul { margin: 6px 0 0; padding-left: 18px; }
 .cond li { margin: 2px 0; }
 .tableWrap:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+
+/* Author display rules (.grid, .skeletonGrid, .statusStrip) otherwise beat the
+   UA stylesheet, so elements toggled with the hidden attribute stayed visible
+   in real browsers — the skeleton grid permanently covered the results. */
+[hidden] { display: none !important; }
