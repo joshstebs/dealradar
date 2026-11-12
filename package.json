@@ -1,0 +1,11 @@
+{
+  "name": "dealradar-ca-smoke",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node scripts/ui_smoke.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}

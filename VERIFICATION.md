@@ -53,3 +53,140 @@ gradle :app:testDebugUnitTest :app:assembleDebug
 
 Set `TEST_DATABASE_URL` and `TEST_REDIS_URL` to dedicated test services to run
 storage integrations. Do not point these tests at a production database.
+
+## 2026-11-10 — reliability pass (OracleStebs)
+
+Verified locally against Python 3.14 and the live Flipp endpoint:
+
+- Full suite: 40 discovered, 37 passed, 3 skipped (PostgreSQL/Redis services and
+  the Android client, which is not in this repository).
+- Live Flipp search with a full postal code (N9A 6K9): HTTP 200, 8–43 offers,
+  images and sale/regular prices mapped. An FSA-only request returns HTTP 422
+  with a clear explanation; the live provider rejects FSAs with code 605.
+- RFD is bot-blocked (HTTP 202 JavaScript challenge) and is reported as
+  `blocked`, not as a schema change. Search continues with Flipp.
+- The gzip double-decode defect was reproduced against the live feed
+  (`httpx.DecodingError: incorrect header check`) and is covered by a regression
+  test that serves a gzip body with its original headers.
+- Watchlist round trip (create, list with best current offer, delete) passes
+  against SQLite. History summary (lowest/median/latest/change) passes with two
+  observations of the same item.
+- `node scripts/ui_smoke.mjs` drives the real `web/app.js` in jsdom against the
+  running API: cards render, CAD formatting is present, comparison opens,
+  watchlist persists, and an FSA-only search shows the required error.
+
+Not verified here:
+
+- No Chromium/Android runtime is available in this sandbox, so layout and touch
+  behaviour were not exercised on a real device or emulator. The jsdom smoke test
+  validates behaviour, not visual rendering.
+- Online (`ecom_items`) coverage depends on the provider returning them for a
+  query; no retailer checkout or stock verification was performed.
+- RFD remains unavailable until a permitted feed or browser-based collector is
+  approved.
+
+## 2026-11-11 — honesty, expiry, watchlist and filtering pass (Bosun)
+
+Verified locally on Python 3.14.4 / Node 26.12.0 against the live Flipp endpoint:
+
+- Full suite: 60 discovered, 57 passed, 3 skipped (PostgreSQL/Redis integrations,
+  Android client absent). New `tests/test_honesty_fixes.py` covers 20 cases:
+  multipack quantities ("6 x 100 g", "355 mL x 12", "1 kg (pack of 2)"),
+  per-measure discount suppression, zero-price rejection, implausible-original
+  rejection, date-only expiry in the Canadian site timezone, numeric (not
+  lexicographic) best-offer ordering, target preservation on re-watch, history
+  summaries excluding per-measure rows, deals filtering, retailer/price filters,
+  price sorting, inverted range rejection, and watchlist cache/privacy headers.
+- `scripts/validate_live.py --postal-code "N9A 6K9" --query chicken`:
+  HTTP 200, Flipp `partial`, **74 items parsed, 70 offers returned**, 14 real
+  retailer discounts, 0 zero/absurd prices, valid windows
+  `2026-11-03T05:00Z → 2026-11-16T04:59Z`. Report retained at
+  `validation/live-feeds.json`. RFD remains blocked: HTTPS preflight 406 and a
+  202 JavaScript challenge, reported as `blocked`, never substituted.
+- UI smoke (`node scripts/ui_smoke.mjs`, jsdom 26): **13/13 assertions** against
+  a local uvicorn instance and live data — cards, CAD formatting, visible
+  source-reported caveat, price notes, comparison, server-persisted watchlist,
+  FSA rejection, failed-fetch error, and stale-comparison removal.
+
+Fixes in this pass:
+
+- No percentage discount is derived from a per-measure price against a package
+  original; a "$0.00" sale price is rejected; a stated original more than 10x
+  the sale price is excluded as a data error; `/v1/deals/top` additionally
+  excludes per-measure rows, zero prices, >95% claims, and now applies its
+  `period` window instead of echoing it.
+- Date-only `valid_to`/`valid_from` resolve in `America/Toronto` (end of day)
+  instead of becoming `None`, so an expired circular can no longer remain
+  "active" for the whole cache window.
+- Unit pricing understands trailing counts and "pack of N", so multipacks are
+  not compared with single units at the wrong unit price.
+- Watchlist `best_offer`/`target_hit` compare Decimals (the previous string sort
+  ranked "$10.00" below "$9.50"); targets only match package-priced offers;
+  re-watching without a target keeps the existing target; watchlist and history
+  responses are `private, no-store`, the device id is no longer echoed, and
+  GET/DELETE validate the id format.
+- History summaries use one representative package price per check, exclude
+  per-measure rows, report `checks`, and only support a historical-low claim
+  with at least two checks.
+- Search accepts `retailer`, `min_price`, `max_price` and
+  `sort=relevance|price|unit_price|discount` (validated; inverted ranges are
+  422). Category filtering is deliberately absent because Flipp's live payload
+  contains no category field.
+- Client: all price caveats are available per card, source/outage warnings are
+  rendered, filtered counts reflect visible cards, failed searches clear the
+  stale comparison and reset the result heading, watchlist writes are verified
+  before the star/localStorage update (and reverted on failure), empty states
+  distinguish "no results" from "start here", the comparison table is a
+  keyboard-scrollable region with focus management, and the postal dialog's
+  Cancel no longer risks discarding typed input.
+
+Still not verified / not implemented (unchanged or newly documented):
+
+- No account authentication. Watchlists remain device-id scoped (now with
+  format validation and no-store caching); a leaked device id can read/delete
+  that device's list. Account tokens are a prerequisite for real alerts.
+- No notification delivery exists behind `target_price`/`target_hit`; state is
+  recomputed on GET. README already lists notifications as roadmap.
+- RFD is bot-blocked; no browser-based collector is used or approved.
+- No retailer checkout, stock, or store-level availability verification.
+  Flyer prices remain source-reported.
+- Category data is unavailable from the supported feed, so no category filter.
+- jsdom exercises behaviour, not layout or touch; no Chromium/device run.
+- PostgreSQL/Redis paths remain skipped without test services; no CI workflow
+  exists in this repository.
+
+## 2026-11-11 — independent release review (second pass)
+
+- **Mutation testing:** all 11 fixed bugs were re-introduced one at a time in a
+  scratch worktree; the new tests caught **11/11** (per-measure discount, zero
+  price, implausible original, date-only expiry, Decimal best-offer ranking,
+  pack-of and trailing multipack parsing, target preservation, per-measure
+  history exclusion, deals guards, watchlist target basis).
+- **Live data audit through the real ASGI app:** 134 offers across
+  chicken / ground beef / apples at N9A 6K9 — 36 discounted (every percentage
+  recomputes exactly from the stated original; none exceed 95% or 10x), 32 unit
+  prices (every one recomputes from the declared size), 0 zero/negative prices,
+  0 inverted or already-expired windows, 0 per-measure violations. A separate
+  214-item direct feed probe found **no `$x/lb`-shaped `current_price` at all**
+  in these queries — the per-measure path is covered by tests, not by live data.
+- **Real-browser review** (Chromium via CDP, 390×844 and 320×700, live data):
+  found that elements toggled with the `hidden` attribute but styled with an
+  author `display` rule (`.skeletonGrid`, `.grid`, `.statusStrip`) never hid in
+  a real browser — the loading skeleton permanently covered the results on
+  phones. jsdom cannot catch this. Fixed with `[hidden] { display: none !important; }`
+  and re-verified in-browser: skeleton hides, cards render immediately under
+  the filters, zero horizontal overflow at 390 and 320 px, 48 px watch button,
+  44 px chips, comparison table scrolls in a focusable region, history chart
+  and stats render with live data. Note: re-verification required a CSS cache
+  bust; deployers should serve `/static/*` with a versioned URL or
+  `no-cache` when shipping CSS changes.
+- **Storage:** no PostgreSQL or Redis server exists on this host, so those
+  integration paths remain **untested** (documented; drivers are installed and
+  the tests skip cleanly). Added `MigrationTests`: a legacy SQLite database
+  gains its columns, rows backfill, corrupt rows are skipped, and reopening is
+  idempotent.
+- **CI readiness:** added `.github/workflows/ci.yml` — unittest on Python
+  3.12/3.14 plus `compileall`, and a UI smoke job using
+  `scripts/smoke_server.py` (the real app with a fixture provider transport, no
+  live calls). The 13-assertion smoke passes against it locally.
+- Suite after review additions: 61 tests, 58 passed, 3 skipped.

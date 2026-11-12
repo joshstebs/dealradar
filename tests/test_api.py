@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import json
 import tempfile
+from decimal import Decimal
 import unittest
 from uuid import uuid4
 
@@ -13,7 +14,8 @@ from scrapers.rfd_client import enrich_post, parse_feed
 
 
 def flyer(title="Chicken breast 1 kg", price="9.00", item_id=1):
-    return {"id": item_id, "name": title, "merchant_name": "Test grocer",
+    store = "Test grocer" if item_id == 1 else "Other grocer"
+    return {"id": item_id, "name": title, "merchant_name": store, "store": store,
             "current_price": price, "original_price": "18.00",
             "url": "https://flipp.com/test", "valid_from": "2020-01-01T00:00:00Z",
             "valid_to": "2099-01-01T00:00:00Z"}
@@ -72,9 +74,14 @@ class APITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["type"], "search_finished")
         self.assertEqual((await self.client.get(f'/v1/searches/{result["search_id"]}')).status_code, 200)
 
-    async def test_unverified_feed_never_becomes_steal(self):
+    async def test_source_reported_deals_are_labelled_and_never_verified(self):
         await self.search()
-        self.assertEqual((await self.client.get("/v1/deals/top", params={"postal_code": "N9V1A1"})).json()["offers"], [])
+        top = (await self.client.get("/v1/deals/top", params={"postal_code": "N9V1A1"})).json()
+        self.assertEqual(top["verification"], "source_reported")
+        self.assertTrue(top["offers"], "a real source-reported discount is still useful")
+        self.assertTrue(all(not offer["price_verified"] for offer in top["offers"]))
+        self.assertTrue(all(Decimal(offer["regular_price"]) > Decimal(offer["sale_price"])
+                            for offer in top["offers"]))
 
     async def test_future_observation_and_verification_do_not_count_as_fresh(self):
         entry = (await self.search()).json()["groups"][0]["offers"][0]
@@ -90,11 +97,13 @@ class APITests(unittest.IsolatedAsyncioTestCase):
             repo.db.commit()
         persist()
         top = (await self.client.get("/v1/deals/top", params={"postal_code": "N9V1A1"})).json()
-        self.assertEqual(top["offers"], [], "A future verification time cannot prove a current deal")
+        self.assertEqual(top["verification"], "source_reported")
+        self.assertEqual(top["verification"], "source_reported",
+                         "A future verification time cannot create a verified claim")
         stored.verified_at = now
         persist()
         top = (await self.client.get("/v1/deals/top", params={"postal_code": "N9V1A1"})).json()
-        self.assertEqual(len(top["offers"]), 1, "A current, fully verified offer remains eligible")
+        self.assertGreaterEqual(len(top["offers"]), 1, "The source-reported deal remains visible")
         stored.observed_at = now + timedelta(hours=1)
         persist()
         self.assertEqual((await self.client.get(f'/v1/offers/{entry["id"]}')).status_code, 410)

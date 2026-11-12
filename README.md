@@ -1,9 +1,9 @@
 # DealRadar CA starter
 
 FastAPI backend, source adapters, persistent offer/history read model, injectable
-LLM normalizer, native Android client, and responsive React component. The API
-runs locally; external feeds and an Android APK remain unvalidated in this
-restricted execution environment. No deployment has been performed.
+LLM normalizer, and a mobile-first web client. The API runs locally; external
+feeds are live-validated where noted in `VERIFICATION.md`. The native Android
+client referenced by earlier revisions is not included in this repository.
 
 ```sh
 cd /workspace/dealradar-ca
@@ -23,15 +23,39 @@ it does not geocode natural-language place names or perform semantic retrieval.
 ```sh
 curl -X POST http://localhost:8000/v1/search \
   -H 'Content-Type: application/json' \
-  -d '{"query":"cheap chicken breast near Windsor","postal_code":"N9V"}'
-python scripts/validate_live.py --postal-code N9V --query chicken
+  -d '{"query":"cheap chicken breast near Windsor","postal_code":"N9A 6K9"}'
+
+# Filters use real offer fields; category is not offered because the live feed
+# does not provide one.
+curl -X POST http://localhost:8000/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"chicken","postal_code":"N9A 6K9","retailer":"Sobeys",
+       "min_price":"5","max_price":"25","sort":"unit_price"}'
+
+python scripts/validate_live.py --postal-code "N9A 6K9" --query chicken
 python scripts/export_openapi.py
+npm install --include=dev && node scripts/ui_smoke.mjs http://127.0.0.1:8000
 ```
 
 The live checker writes a report and exits nonzero on failure. It never
 substitutes fixtures. See `validation/live-feeds.json` for the actual attempt.
 Enable feeds individually with `FLIPP_ENABLED` and `RFD_ENABLED`. All-source
 failure returns HTTP 503; partial failures retain useful results and warnings.
+
+New endpoints: `GET /v1/deals/top` (source-reported discounts, explicitly not
+checkout-verified; per-measure and implausible >95% claims are excluded and the
+`period` window is applied), `GET /v1/items/{id}/history` (observations plus
+low/median/latest summary over package prices and distinct checks only), and
+`POST`/`GET`/`DELETE /v1/watchlist` (device-scoped watchlist with price-drop
+state). Product comparison is conservative: listings only share a group when
+brand, normalized name, and declared size agree, or when a model/SKU matches.
+
+Known limits: there is no account authentication or notification delivery —
+watchlists are scoped by a caller-held device id and `target_hit` is computed on
+read. RFD is bot-blocked. Store stock, checkout prices, and category data are
+not available from the supported feed, so none are inferred. Unit prices are
+shown only when a declared package size can be parsed; per-measure prices are
+labelled and excluded from discount and basket math.
 
 Set `DATABASE_URL=postgresql://...` for PostgreSQL and `REDIS_URL=redis://...` for
 Redis. Configuration reads process environment; `.env.example` is a template,
@@ -46,9 +70,13 @@ for five minutes. Source-reported prices cannot become verified steals without
 independent checkout and local-coverage evidence; the current adapters provide
 neither, so verified-steal responses are intentionally empty.
 
-Native Android setup: [`android/README.md`](android/README.md). CI is configured
-for Python, real PostgreSQL/Redis connections, and Android JVM tests/debug APK.
-The workflow has not been run from this workspace.
+Open the web client at `http://localhost:8000/`. It is served by FastAPI from
+`web/` with no build step: search, source-status labels, comparison tables,
+observed price history, and a device-local watchlist.
+
+A full postal code is required for live pricing. Flipp accepts an FSA with
+HTTP 422 (code 605), and store coverage differs inside one FSA, so the API
+returns 422 with an explanation instead of inventing a suffix.
 
 Apply `db/schema.sql` to PostgreSQL 15+ with pgvector installed. Use least-privilege
 database credentials; migrations run separately from the API identity.
