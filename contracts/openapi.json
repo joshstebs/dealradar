@@ -326,6 +326,7 @@
     "/v1/deals/top": {
       "get": {
         "summary": "Top",
+        "description": "Source-reported deals, explicitly not checkout-verified.\n\nThe old endpoint required verification flags no adapter can set, so it\nalways returned an empty list. This returns real observed discounts with\ntheir provenance instead of pretending they are verified steals.",
         "operationId": "top_v1_deals_top_get",
         "parameters": [
           {
@@ -346,6 +347,18 @@
               "pattern": "^(day|week)$",
               "default": "day",
               "title": "Period"
+            }
+          },
+          {
+            "name": "min_discount",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 99,
+              "minimum": 1,
+              "default": 20,
+              "title": "Min Discount"
             }
           }
         ],
@@ -401,6 +414,155 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/watchlist": {
+      "post": {
+        "summary": "Watch",
+        "operationId": "watch_v1_watchlist_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Watchlist",
+        "operationId": "watchlist_v1_watchlist_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "postal_code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Postal Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/watchlist/{item_id}": {
+      "delete": {
+        "summary": "Unwatch",
+        "operationId": "unwatch_v1_watchlist__item_id__delete",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Index",
+        "operationId": "index__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           }
@@ -542,6 +704,50 @@
               }
             ],
             "title": "Source Url"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "brand": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
+          },
+          "discount_percent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discount Percent"
           },
           "currency": {
             "type": "string",
@@ -712,6 +918,53 @@
             ],
             "title": "Locale",
             "default": "en-ca"
+          },
+          "retailer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retailer"
+          },
+          "min_price": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{1,7}(?:\\.\\d{1,2})?$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Price"
+          },
+          "max_price": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{1,7}(?:\\.\\d{1,2})?$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Price"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "relevance",
+              "price",
+              "unit_price",
+              "discount"
+            ],
+            "title": "Sort",
+            "default": "relevance"
           }
         },
         "additionalProperties": false,
@@ -906,6 +1159,41 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WatchRequest": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Device Id"
+          },
+          "item_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Item Id"
+          },
+          "target_price": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{1,7}(?:\\.\\d{1,2})?$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Price"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_id",
+          "item_id"
+        ],
+        "title": "WatchRequest"
       }
     }
   }

@@ -87,6 +87,12 @@ class RFDClient:
         if not 1 <= max_threads <= 30:
             raise ValueError("max_threads must be 1–30")
         response = await fetch(self.http, self.feed_url)
+        content_type = response.headers.get("content-type", "")
+        if "html" in content_type.casefold() or response.text.lstrip().lower().startswith(("<!doctype html", "<html")):
+            # The forum answers automated clients with a JavaScript challenge
+            # page (HTTP 202). Report the block; do not pretend the feed schema
+            # changed.
+            raise ValueError("RFD feed is blocked by a bot challenge; no RSS was returned")
         posts = parse_feed(response.text)
         deals, unknown, errors = [], [], []
         unclassified = 0

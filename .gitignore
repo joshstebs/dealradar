@@ -8,3 +8,4 @@ data/
 android/.gradle/
 android/local.properties
 android/**/build/
+node_modules/

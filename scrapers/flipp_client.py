@@ -1,4 +1,4 @@
-"""Experimental public-endpoint adapter; endpoint/schema require live validation.
+"""Public-endpoint adapter; endpoint/schema validated against the live feed.
 
 No authentication bypass. Configure a licensed endpoint for production.
 """
@@ -23,6 +23,10 @@ def normalize_postal(value: str) -> tuple[str, str]:
     return compact, compact[:3]
 
 
+def is_fsa(value: str) -> bool:
+    return len(value) == 3
+
+
 class FlippClient:
     def __init__(self, http: httpx.AsyncClient, cache: Any = None,
                  endpoint: str = "https://backflipp.wishabi.com/flipp/items/search",
@@ -34,18 +38,22 @@ class FlippClient:
 
     async def search(self, query: str, postal_code: str) -> dict:
         postal, fsa = normalize_postal(postal_code)
+        if is_fsa(postal):
+            # The live provider rejects an FSA with HTTP 422 (code 605). Never
+            # invent a full postal code: local circular coverage differs inside
+            # one FSA and a made-up suffix would attribute prices to the wrong
+            # stores.
+            raise ValueError("Flipp requires a full postal code such as N9A 6K9; an FSA alone cannot be priced")
         query = " ".join(query.split())
         if not query or len(query) > 250:
-            raise ValueError("Query must contain 1–250 characters")
+            raise ValueError("Query must contain 1-250 characters")
         scope = self.region_variant or postal
         digest = hashlib.sha256(query.casefold().encode()).hexdigest()[:24]
-        key = f"flyer:v1:flipp:{fsa}:{scope}:{self.locale}:{digest}"
+        key = f"flyer:v2:flipp:{fsa}:{scope}:{self.locale}:{digest}"
         if self.cache:
             hit = await self.cache.get(key)
             if hit:
                 return json.loads(hit)
-        # FSA is accepted as input, but provider support must be checked. Never
-        # invent a full postal code by appending an arbitrary suffix.
         response = await fetch(self.http, self.endpoint, params={
             "q": query, "postal_code": postal, "locale": self.locale,
         })
@@ -53,23 +61,46 @@ class FlippClient:
         payload = response.json()
         if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
             raise ValueError("Flipp schema changed: expected an items array")
-        items = [self.map_item(item) for item in payload["items"]]
+        items, skipped = [], 0
+        for raw, kind in [(item, "flyer") for item in payload["items"]] + \
+                         [(item, "online") for item in payload.get("ecom_items", []) if isinstance(item, dict)]:
+            try:
+                items.append(self.map_item(raw, kind))
+            except ValueError:
+                # One malformed listing must not discard the whole circular.
+                skipped += 1
         result = {"source": "flipp", "fsa": fsa, "coverage_verified": False,
-                  "items": items, "fetched_at": datetime.now(timezone.utc).isoformat()}
+                  "items": items, "skipped": skipped,
+                  "fetched_at": datetime.now(timezone.utc).isoformat()}
         if self.cache:
             await self.cache.set(key, json.dumps(result), ex=21600)
         return result
 
     @staticmethod
-    def map_item(raw: dict) -> dict:
+    def map_item(raw: dict, kind: str = "flyer") -> dict:
         if not isinstance(raw, dict) or not raw.get("name"):
             raise ValueError("Flipp item lacks a product name")
+        merchant = raw.get("merchant") if isinstance(raw.get("merchant"), dict) else {}
+        store = raw.get("merchant_name") or merchant.get("name")
+        image = raw.get("clean_image_url") or raw.get("image_url")
         # Preserve price strings for currency-aware parsing downstream. Do not
         # infer regular prices, discounts, dates, or clipping URLs from IDs.
-        return {"source_id": str(raw.get("id", "")), "title": raw["name"],
-                "store": raw.get("merchant_name"), "sale_price_raw": raw.get("current_price"),
-                "regular_price_raw": raw.get("original_price"),
-                "valid_from": raw.get("valid_from"), "valid_to": raw.get("valid_to"),
-                "image_url": raw.get("image_url"), "flyer_id": raw.get("flyer_id"),
-                "polygon": raw.get("polygon"), "source_url": raw.get("url"),
-                "raw": raw}
+        return {
+            "source_id": str(raw.get("id") or raw.get("item_id") or ""),
+            "kind": kind,
+            "title": raw["name"],
+            "store": store,
+            "brand": raw.get("brand"),
+            "sku": raw.get("sku") or raw.get("global_id"),
+            "description": raw.get("description"),
+            "sale_price_raw": raw.get("current_price"),
+            "regular_price_raw": raw.get("original_price"),
+            "sale_story": raw.get("sale_story"),
+            "valid_from": raw.get("valid_from"),
+            "valid_to": raw.get("valid_to"),
+            "image_url": image,
+            "flyer_id": raw.get("flyer_id"),
+            "polygon": raw.get("polygon"),
+            "source_url": raw.get("url") or raw.get("merchant_url"),
+            "raw": raw,
+        }

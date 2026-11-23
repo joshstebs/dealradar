@@ -1,0 +1,42 @@
+{
+  "checked_at": "2026-11-11T06:08:08.335267+00:00",
+  "query": "chicken",
+  "postal_code": "N9A 6K9",
+  "api_status": 200,
+  "sources": [
+    {
+      "source": "flipp",
+      "status": "partial",
+      "checked_at": "2026-11-11T06:08:07.797717Z",
+      "error_code": null,
+      "item_count": 74,
+      "rejected_count": 225,
+      "message": "Ambiguous prices, missing stores, or inactive offers excluded"
+    },
+    {
+      "source": "rfd",
+      "status": "error",
+      "checked_at": "2026-11-11T06:08:07.797717Z",
+      "error_code": "blocked",
+      "item_count": 0,
+      "rejected_count": 0,
+      "message": "RFD feed is blocked by a bot challenge; no RSS was returned"
+    }
+  ],
+  "error": null,
+  "preflight_failures": [
+    {
+      "source": "rfd",
+      "status": "error",
+      "error_code": "HTTPStatusError",
+      "message": "Client error '406 Not Acceptable' for url 'https://forums.redflagdeals.com/rss/feed/active/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/406"
+    }
+  ],
+  "live_validated": true,
+  "offer_count": 70,
+  "community_count": 0,
+  "notes": [
+    "Source access does not independently verify retailer checkout prices or local store coverage.",
+    "A blocked source (for example RFD's bot challenge) is reported, not substituted with fixtures."
+  ]
+}
